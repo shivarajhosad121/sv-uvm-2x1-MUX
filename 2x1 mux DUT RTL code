@@ -1,0 +1,15 @@
+module mux(
+    input logic d0,
+    input logic d1,
+    input logic s,
+    output logic y
+);
+
+always_comb begin
+    if(s)
+        y = d1;
+    else
+        y = d0;
+end
+
+endmodule
