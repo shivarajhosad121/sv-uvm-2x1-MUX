@@ -1,0 +1,78 @@
+module tb;
+
+    logic d0, d1;
+    logic s;
+    logic y;
+
+    // DUT Instantiation
+    mux DUT (
+        .d0(d0),
+        .d1(d1),
+        .s(s),
+        .y(y)
+    );
+
+    // Transaction Class
+    class mux_txn;
+        bit d0;
+        bit d1;
+        bit s;
+
+        function new(bit d0, bit d1, bit s);
+            this.d0 = d0;
+            this.d1 = d1;
+            this.s  = s;
+        endfunction
+    endclass
+
+    mux_txn t;
+
+    // Driver
+    task drive(mux_txn t);
+        d0 <= t.d0;
+        d1 <= t.d1;
+        s  <= t.s;
+        #1;
+    endtask
+
+    // Assertions
+    assert_sel1:
+    assert property (@(*) s |-> (y == d1))
+    else
+        $error("MUX failed when s=1");
+
+    assert_sel0:
+    assert property (@(*) !s |-> (y == d0))
+    else
+        $error("MUX failed when s=0");
+
+    // Stimulus
+    initial begin
+
+        d0 = 0;
+        d1 = 0;
+        s  = 0;
+
+        t = new(0,1,0);
+        drive(t);
+
+        t = new(0,1,1);
+        drive(t);
+
+        t = new(1,0,0);
+        drive(t);
+
+        t = new(1,0,1);
+        drive(t);
+
+        #5;
+        $finish;
+    end
+
+    // Monitor
+    initial begin
+        $monitor("Time=%0t d0=%0b d1=%0b s=%0b y=%0b",
+                 $time, d0, d1, s, y);
+    end
+
+endmodule
