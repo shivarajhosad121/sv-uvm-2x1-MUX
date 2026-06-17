@@ -1,0 +1,328 @@
+`timescale 1ns/1ps
+
+module mux(
+    input  logic d0,
+    input  logic d1,
+    input  logic s,
+    output logic y
+);
+
+    always_comb
+        y = s ? d1 : d0;
+
+endmodule
+
+
+interface mux_if;
+
+    logic d0;
+    logic d1;
+    logic s;
+    logic y;
+
+endinterface
+
+
+import uvm_pkg::*;
+`include "uvm_macros.svh"
+
+
+class mux_txn extends uvm_sequence_item;
+
+    rand bit d0;
+    rand bit d1;
+    rand bit s;
+
+    `uvm_object_utils_begin(mux_txn)
+        `uvm_field_int(d0,UVM_ALL_ON)
+        `uvm_field_int(d1,UVM_ALL_ON)
+        `uvm_field_int(s ,UVM_ALL_ON)
+    `uvm_object_utils_end
+
+    function new(string name="mux_txn");
+        super.new(name);
+    endfunction
+
+endclass
+
+
+class mux_sequence extends uvm_sequence #(mux_txn);
+
+    `uvm_object_utils(mux_sequence)
+
+    function new(string name="mux_sequence");
+        super.new(name);
+    endfunction
+
+    task body();
+
+        repeat(10)
+        begin
+            req = mux_txn::type_id::create("req");
+
+            start_item(req);
+            assert(req.randomize());
+            finish_item(req);
+        end
+
+    endtask
+
+endclass
+
+
+class mux_driver extends uvm_driver #(mux_txn);
+
+    `uvm_component_utils(mux_driver)
+
+    virtual mux_if vif;
+
+    function new(string name, uvm_component parent);
+        super.new(name,parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        if(!uvm_config_db#(virtual mux_if)::get(this,"","vif",vif))
+            `uvm_fatal("DRV","Virtual Interface not found")
+
+    endfunction
+
+    task run_phase(uvm_phase phase);
+
+        forever
+        begin
+
+            seq_item_port.get_next_item(req);
+
+            vif.d0 <= req.d0;
+            vif.d1 <= req.d1;
+            vif.s  <= req.s;
+
+            #10;
+
+            seq_item_port.item_done();
+
+        end
+
+    endtask
+
+endclass
+
+
+class mux_monitor extends uvm_monitor;
+
+    `uvm_component_utils(mux_monitor)
+
+    virtual mux_if vif;
+
+    uvm_analysis_port #(mux_txn) mon_port;
+
+    function new(string name, uvm_component parent);
+
+        super.new(name,parent);
+
+        mon_port = new("mon_port",this);
+
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        if(!uvm_config_db#(virtual mux_if)::get(this,"","vif",vif))
+            `uvm_fatal("MON","Virtual Interface not found")
+
+    endfunction
+
+    task run_phase(uvm_phase phase);
+
+        mux_txn tx;
+
+        forever
+        begin
+
+            #10;
+
+            tx = mux_txn::type_id::create("tx");
+
+            tx.d0 = vif.d0;
+            tx.d1 = vif.d1;
+            tx.s  = vif.s;
+
+            mon_port.write(tx);
+
+        end
+
+    endtask
+
+endclass
+
+
+class mux_scoreboard extends uvm_scoreboard;
+
+    `uvm_component_utils(mux_scoreboard)
+
+    virtual mux_if vif;
+
+    uvm_analysis_imp #(mux_txn,mux_scoreboard) sb_port;
+
+    function new(string name, uvm_component parent);
+
+        super.new(name,parent);
+
+        sb_port = new("sb_port",this);
+
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        if(!uvm_config_db#(virtual mux_if)::get(this,"","vif",vif))
+            `uvm_fatal("SB","Virtual Interface not found")
+
+    endfunction
+
+    function void write(mux_txn tx);
+
+        bit expected;
+
+        expected = tx.s ? tx.d1 : tx.d0;
+
+        if(expected == vif.y)
+            `uvm_info("SCOREBOARD",
+                      $sformatf("PASS d0=%0b d1=%0b s=%0b y=%0b",
+                                 tx.d0,tx.d1,tx.s,vif.y),
+                      UVM_LOW)
+        else
+            `uvm_error("SCOREBOARD",
+                       $sformatf("FAIL d0=%0b d1=%0b s=%0b y=%0b expected=%0b",
+                                 tx.d0,tx.d1,tx.s,vif.y,expected))
+
+    endfunction
+
+endclass
+
+
+class mux_agent extends uvm_agent;
+
+    `uvm_component_utils(mux_agent)
+
+    uvm_sequencer #(mux_txn) seqr;
+    mux_driver drv;
+    mux_monitor mon;
+
+    function new(string name, uvm_component parent);
+        super.new(name,parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        seqr = uvm_sequencer#(mux_txn)::type_id::create("seqr",this);
+        drv  = mux_driver::type_id::create("drv",this);
+        mon  = mux_monitor::type_id::create("mon",this);
+
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+
+        drv.seq_item_port.connect(seqr.seq_item_export);
+
+    endfunction
+
+endclass
+
+
+class mux_env extends uvm_env;
+
+    `uvm_component_utils(mux_env)
+
+    mux_agent agt;
+    mux_scoreboard sb;
+
+    function new(string name, uvm_component parent);
+        super.new(name,parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        agt = mux_agent::type_id::create("agt",this);
+        sb  = mux_scoreboard::type_id::create("sb",this);
+
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+
+        agt.mon.mon_port.connect(sb.sb_port);
+
+    endfunction
+
+endclass
+
+
+class mux_test extends uvm_test;
+
+    `uvm_component_utils(mux_test)
+
+    mux_env env;
+
+    function new(string name, uvm_component parent);
+        super.new(name,parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+
+        super.build_phase(phase);
+
+        env = mux_env::type_id::create("env",this);
+
+    endfunction
+
+    task run_phase(uvm_phase phase);
+
+        mux_sequence seq;
+
+        phase.raise_objection(this);
+
+        seq = mux_sequence::type_id::create("seq");
+
+        seq.start(env.agt.seqr);
+
+        #20;
+
+        phase.drop_objection(this);
+
+    endtask
+
+endclass
+
+
+module top;
+
+    import uvm_pkg::*;
+    `include "uvm_macros.svh"
+
+    mux_if mif();
+
+    mux dut(
+        .d0(mif.d0),
+        .d1(mif.d1),
+        .s (mif.s),
+        .y (mif.y)
+    );
+
+    initial begin
+
+        uvm_config_db#(virtual mux_if)::set(null,"*","vif",mif);
+
+        run_test("mux_test");
+
+    end
+
+endmodule
